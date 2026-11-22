@@ -13,7 +13,7 @@
 //
 // Authors:
 //
-use aarch64_cpu::{asm::wfi, registers::*};
+use aarch64_cpu::registers::*;
 use bit_field::BitField;
 use core::arch::global_asm;
 
@@ -409,9 +409,6 @@ fn handle_smc(regs: &mut GeneralRegisters) {
 fn psci_emulate_features_info(code: u64) -> u64 {
     match code {
         PsciFnId::PSCI_VERSION
-        | PsciFnId::PSCI_CPU_SUSPEND_32
-        | PsciFnId::PSCI_CPU_SUSPEND_64
-        | PsciFnId::PSCI_CPU_OFF_32
         | PsciFnId::PSCI_CPU_ON_32
         | PsciFnId::PSCI_CPU_ON_64
         | PsciFnId::PSCI_AFFINITY_INFO_32
@@ -454,12 +451,17 @@ fn handle_psci_smc(
     match code {
         PsciFnId::PSCI_VERSION => PSCI_VERSION_1_1,
         PsciFnId::PSCI_CPU_SUSPEND_32 | PsciFnId::PSCI_CPU_SUSPEND_64 => {
-            wfi();
-            gic_handle_irq();
-            0
+            // Suspending the pCPU in EL2 cannot be woken by the guest
+            // virtual timer, and returning success immediately makes the
+            // guest idle loop spin on SMCs. Report NOT_SUPPORTED so that
+            // the guest cpuidle falls back to plain WFI.
+            ARM_SMCCC_NOT_SUPPORTED as u64
         }
         PsciFnId::PSCI_CPU_OFF_32 | PsciFnId::PSCI_CPU_OFF_64 => {
-            todo!();
+            // CPU_OFF (hotplug offline) is not emulated yet. Returning
+            // NOT_SUPPORTED keeps the caller alive instead of panicking
+            // on todo!().
+            ARM_SMCCC_NOT_SUPPORTED as u64
         }
         PsciFnId::PSCI_AFFINITY_INFO_32 | PsciFnId::PSCI_AFFINITY_INFO_64 => {
             !get_cpu_data(arg0 as _).vcpu.state.is_online() as _
